@@ -156,3 +156,106 @@ class UnifiedPredictionView(views.APIView):
             current_date += timedelta(days=1)
 
         return Response(predictions_list)
+
+
+class DayLogToggleView(views.APIView):
+    """
+    Handles adding or removing a single period day.
+    POST to add a day.
+    DELETE to remove a day.
+    """
+    def _parse_date(self, date_str):
+        try:
+            return timezone.datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return None
+
+    def post(self, request, date_str):
+        """
+        Add a period log for a specific day.
+        This can result in creating a new cycle, extending an existing one,
+        or merging two adjacent cycles.
+        """
+        date = self._parse_date(date_str)
+        if not date:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+
+        # 1. Check if the date is already part of an existing cycle.
+        if Cycle.objects.filter(user=user, start_date__lte=date, end_date__gte=date).exists():
+            return Response(status=status.HTTP_200_OK) # Date already logged, do nothing.
+
+        # 2. Check for adjacent cycles.
+        prev_cycle = Cycle.objects.filter(user=user, end_date=date - timedelta(days=1)).first()
+        next_cycle = Cycle.objects.filter(user=user, start_date=date + timedelta(days=1)).first()
+
+        # 3a. Both previous and next cycles exist -> Merge them.
+        if prev_cycle and next_cycle:
+            prev_cycle.end_date = next_cycle.end_date
+            prev_cycle.save()
+            next_cycle.delete()
+            return Response(status=status.HTTP_200_OK)
+        
+        # 3b. Only a previous cycle exists -> Extend it.
+        if prev_cycle:
+            prev_cycle.end_date = date
+            prev_cycle.save()
+            return Response(status=status.HTTP_200_OK)
+
+        # 3c. Only a next cycle exists -> Extend it.
+        if next_cycle:
+            next_cycle.start_date = date
+            next_cycle.save()
+            return Response(status=status.HTTP_200_OK)
+            
+        # 4. No adjacent cycles -> Create a new single-day cycle.
+        Cycle.objects.create(user=user, start_date=date, end_date=date)
+        return Response(status=status.HTTP_201_CREATED)
+
+    def delete(self, request, date_str):
+        """
+        Remove a period log for a specific day.
+        This can result in deleting a cycle, shortening it, or splitting it into two.
+        """
+        date = self._parse_date(date_str)
+        if not date:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+        
+        # 1. Find the cycle containing the date.
+        cycle = Cycle.objects.filter(user=user, start_date__lte=date, end_date__gte=date).first()
+
+        if not cycle:
+            return Response(status=status.HTTP_204_NO_CONTENT) # No cycle to delete from.
+
+        # 2a. Case: Single-day cycle.
+        if cycle.start_date == cycle.end_date:
+            cycle.delete()
+        
+        # 2b. Case: Date is the start date.
+        elif cycle.start_date == date:
+            cycle.start_date += timedelta(days=1)
+            cycle.save()
+
+        # 2c. Case: Date is the end date.
+        elif cycle.end_date == date:
+            cycle.end_date -= timedelta(days=1)
+            cycle.save()
+            
+        # 2d. Case: Date is in the middle -> Split the cycle.
+        else:
+            original_end_date = cycle.end_date
+            # Update the existing cycle to end before the deleted date.
+            cycle.end_date = date - timedelta(days=1)
+            cycle.save()
+            
+            # Create a new cycle for the part after the deleted date.
+            Cycle.objects.create(
+                user=user,
+                start_date=date + timedelta(days=1),
+                end_date=original_end_date
+            )
+            
+        return Response(status=status.HTTP_204_NO_CONTENT)

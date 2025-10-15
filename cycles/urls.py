@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import CycleLogView, UnifiedPredictionView, DailyLogView
+from .views import CycleLogView, UnifiedPredictionView, DailyLogView, DayLogToggleView
 
 urlpatterns = [
     path('', CycleLogView.as_view(), name='cycle-log'),
@@ -11,4 +11,8 @@ urlpatterns = [
     # Kept daily log view, now at a cleaner URL
     # Maps to /api/cycle/logs/<date_str>/
     path('logs/<str:date_str>/', DailyLogView.as_view(), name='daily-log'),
+
+    # New endpoint for adding/removing a single period day
+    # Maps to /api/cycle/log/<date_str>/
+    path('log/<str:date_str>/', DayLogToggleView.as_view(), name='day-log-toggle'),
 ]
