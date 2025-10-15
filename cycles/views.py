@@ -10,10 +10,28 @@ class CycleLogView(views.APIView):
     Handles listing cycles (GET) and logging period start/end (POST).
     """
     def get(self, request):
-        """List all cycles for the authenticated user."""
+        """
+        List all individual period dates for the authenticated user in a flat list.
+        e.g., ["2025-10-01", "2025-10-02", ...]
+        """
         cycles = Cycle.objects.filter(user=request.user)
-        serializer = CycleSerializer(cycles, many=True)
-        return Response(serializer.data)
+        all_period_dates = []
+        
+        for cycle in cycles:
+            start_date = cycle.start_date
+            # If end_date is None, it's an ongoing period. Use today's date as the end for display purposes.
+            end_date = cycle.end_date if cycle.end_date else timezone.now().date()
+            
+            # Ensure start_date is not after end_date for the loop
+            if start_date > end_date:
+                continue
+
+            current_date = start_date
+            while current_date <= end_date:
+                all_period_dates.append(current_date.strftime('%Y-%m-%d'))
+                current_date += timedelta(days=1)
+                
+        return Response(all_period_dates)
 
     def post(self, request):
         """
@@ -81,7 +99,9 @@ class DailyLogView(views.APIView):
 
 class UnifiedPredictionView(views.APIView):
     """
-    Provides cycle predictions including next period, ovulation, and fertile window.
+    Provides cycle predictions as a list of events, each with a date and type.
+    Types can be 'next_period', 'ovulation_day', or 'fertile_window'.
+    e.g., [{'date': '...', 'type': 'next_period'}, ...]
     """
     def get(self, request):
         cycles = Cycle.objects.filter(user=request.user).order_by('-start_date')[:6]
@@ -111,11 +131,28 @@ class UnifiedPredictionView(views.APIView):
         fertile_window_start = estimated_ovulation - timedelta(days=5)
         fertile_window_end = estimated_ovulation
 
-        # Match the keys expected by the frontend: `next_period`, `ovulation_day`
-        return Response({
-            "next_period": predicted_next_start,
-            "average_cycle_length": avg_cycle_length,
-            "fertile_window_start": fertile_window_start,
-            "fertile_window_end": fertile_window_end,
-            "ovulation_day": estimated_ovulation,
+        # Create a list of prediction objects as required by the frontend
+        predictions_list = []
+
+        # Add next period date
+        predictions_list.append({
+            "date": predicted_next_start.strftime('%Y-%m-%d'),
+            "type": "next_period"
         })
+
+        # Add ovulation day
+        predictions_list.append({
+            "date": estimated_ovulation.strftime('%Y-%m-%d'),
+            "type": "ovulation_day"
+        })
+
+        # Add all dates in the fertile window
+        current_date = fertile_window_start
+        while current_date <= fertile_window_end:
+            predictions_list.append({
+                "date": current_date.strftime('%Y-%m-%d'),
+                "type": "fertile_window"
+            })
+            current_date += timedelta(days=1)
+
+        return Response(predictions_list)
