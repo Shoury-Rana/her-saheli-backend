@@ -1,17 +1,16 @@
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from users.views import UserProfileView # Import the view directly
 
 urlpatterns = [
     path('admin/', admin.site.urls),
 
-    # Authentication URLs
-    path('api/auth/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
-    path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    # Authentication and User Profile URLs to match frontend
+    path('api/auth/', include('users.urls')),
+    path('api/user/profile/', UserProfileView.as_view(), name='user-profile-detail'),
 
-    # App URLs
-    path('api/users/', include('users.urls')),
+    # Other App URLs
     path('api/cycles/', include('cycles.urls')),
     path('api/pregnancy/', include('pregnancy.urls')),
     path('api/postpartum/', include('postpartum.urls')),
