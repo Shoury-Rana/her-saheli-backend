@@ -2,7 +2,9 @@ from datetime import timedelta
 from django.utils import timezone
 from rest_framework import views, status
 from rest_framework.response import Response
-from .models import Cycle, DailyLog
+from rest_framework.permissions import IsAuthenticated
+from django.db.models import Count
+from .models import Cycle, DailyLog, Symptom
 from .serializers import CycleSerializer, DailyLogSerializer
 
 class CycleLogView(views.APIView):
@@ -259,3 +261,100 @@ class DayLogToggleView(views.APIView):
             )
             
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class InsightsView(views.APIView):
+    """
+    Aggregates cycle, symptom, and pattern data for the user.
+    """
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        user = request.user
+
+        # --- 1. Cycle Length ---
+        cycles = Cycle.objects.filter(user=user, end_date__isnull=False).order_by('-start_date')[:6]
+        
+        cycle_length_data = {
+            'labels': [],
+            'data': []
+        }
+        
+        if cycles.count() > 1:
+            for i in range(len(cycles) - 1, 0, -1):
+                current_cycle_start = cycles[i-1].start_date
+                previous_cycle_start = cycles[i].start_date
+                length = (current_cycle_start - previous_cycle_start).days
+                
+                if 15 < length < 45: # Basic validation for cycle length
+                    cycle_length_data['labels'].append(current_cycle_start.strftime('%b'))
+                    cycle_length_data['data'].append(length)
+
+        # --- 2. Symptom Analysis ---
+        today = timezone.now().date()
+        six_months_ago = today - timedelta(days=180)
+        three_months_ago = today - timedelta(days=90)
+
+        logs_last_six_months = DailyLog.objects.filter(user=user, date__gte=six_months_ago)
+        
+        symptom_analysis = []
+        if logs_last_six_months.exists():
+            total_logs_count = logs_last_six_months.count()
+            logged_symptoms = Symptom.objects.filter(dailylog__in=logs_last_six_months).distinct()
+
+            for symptom in logged_symptoms:
+                total_count = logs_last_six_months.filter(symptoms=symptom).count()
+                frequency = f"{int((total_count / total_logs_count) * 100)}%"
+
+                count_first_half = logs_last_six_months.filter(
+                    symptoms=symptom, 
+                    date__lt=three_months_ago
+                ).count()
+                
+                count_second_half = logs_last_six_months.filter(
+                    symptoms=symptom, 
+                    date__gte=three_months_ago
+                ).count()
+
+                trend = 'stable'
+                if count_first_half > 0:
+                    if count_second_half > count_first_half * 1.2:
+                        trend = 'increasing'
+                    elif count_second_half < count_first_half * 0.8:
+                        trend = 'decreasing'
+                elif count_second_half > 0:
+                    trend = 'increasing'
+                
+                symptom_analysis.append({
+                    'name': symptom.name,
+                    'frequency': frequency,
+                    'trend': trend
+                })
+
+        # --- 3. Identified Patterns (Static) ---
+        identified_patterns = [
+            {
+                'title': 'Sleep Quality',
+                'description': 'Your sleep quality tends to decrease 2-3 days before your period',
+                'icon': 'moon',
+            },
+            {
+                'title': 'Exercise Impact',
+                'description': 'Light exercise during your period helps reduce cramp intensity',
+                'icon': 'fitness',
+            },
+            {
+                'title': 'Dietary Pattern',
+                'description': 'Increased cravings noticed 4-5 days before period starts',
+                'icon': 'nutrition',
+            },
+        ]
+
+        # --- Final Response ---
+        response_data = {
+            'cycleLength': cycle_length_data,
+            'symptoms': symptom_analysis,
+            'patterns': identified_patterns,
+        }
+
+        return Response(response_data)
