@@ -11,7 +11,7 @@ urlpatterns = [
     path('api/user/profile/', UserProfileView.as_view(), name='user-profile-detail'),
 
     # Other App URLs
-    path('api/cycles/', include('cycles.urls')),
+    path('api/cycle/', include('cycles.urls')),
     path('api/pregnancy/', include('pregnancy.urls')),
     path('api/postpartum/', include('postpartum.urls')),
     path('api/content/', include('content.urls')),

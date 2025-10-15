@@ -114,14 +114,14 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=3),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,
-}
+} 
 CORS_ALLOW_ALL_ORIGINS = True
-
+ 
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Her-Saheli API',
     'DESCRIPTION': 'API documentation for the Her-Saheli project.',
