@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.db.models import Count, Avg
 from .models import Cycle, DailyLog, Symptom
 from .serializers import CycleSerializer, DailyLogSerializer
-from django.utils.timezone import now # Ensure this import is present
+from django.utils.timezone import now
 
 
 class CycleLogView(views.APIView):
@@ -46,7 +46,6 @@ class CycleLogView(views.APIView):
         data = request.data
         user = request.user
 
-        # Case 1: End Period. Identified by the presence of 'end_date'.
         if 'end_date' in data:
             last_cycle = Cycle.objects.filter(user=user, end_date__isnull=True).order_by('-start_date').first()
             
@@ -62,7 +61,6 @@ class CycleLogView(views.APIView):
             else:
                 return Response({"error": "No active period found to end."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Case 2: Start Period. Identified by presence of 'start_date' and absence of 'end_date'.
         elif 'start_date' in data:
             if Cycle.objects.filter(user=user, end_date__isnull=True).exists():
                     return Response({"error": "An active period already exists. End it before starting a new one."}, status=status.HTTP_400_BAD_REQUEST)
@@ -73,7 +71,6 @@ class CycleLogView(views.APIView):
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        # Case 3: Invalid data
         return Response({"error": "Provide 'start_date' to begin a period or 'end_date' to end the current one."}, status=status.HTTP_400_BAD_REQUEST)
 
 class DailyLogView(views.APIView):
@@ -117,7 +114,7 @@ class UnifiedPredictionView(views.APIView):
         for i in range(len(cycles) - 1):
             if cycles[i].start_date and cycles[i+1].start_date:
                 length = (cycles[i].start_date - cycles[i+1].start_date).days
-                if 15 < length < 45: # Filter out abnormal cycle lengths
+                if 15 < length < 45: 
                     cycle_lengths.append(length)
 
         if not cycle_lengths:
@@ -128,29 +125,23 @@ class UnifiedPredictionView(views.APIView):
         last_cycle_start = cycles[0].start_date
         predicted_next_start = last_cycle_start + timedelta(days=avg_cycle_length)
         
-        # Ovulation is typically 14 days before the next period
         estimated_ovulation = predicted_next_start - timedelta(days=14)
         
-        # Fertile window is about 5 days before ovulation and the day of ovulation
         fertile_window_start = estimated_ovulation - timedelta(days=5)
         fertile_window_end = estimated_ovulation
 
-        # Create a list of prediction objects as required by the frontend
         predictions_list = []
 
-        # Add next period date
         predictions_list.append({
             "date": predicted_next_start.strftime('%Y-%m-%d'),
             "type": "next_period"
         })
 
-        # Add ovulation day
         predictions_list.append({
             "date": estimated_ovulation.strftime('%Y-%m-%d'),
             "type": "ovulation_day"
         })
 
-        # Add all dates in the fertile window
         current_date = fertile_window_start
         while current_date <= fertile_window_end:
             predictions_list.append({
@@ -186,34 +177,28 @@ class DayLogToggleView(views.APIView):
 
         user = request.user
 
-        # 1. Check if the date is already part of an existing cycle.
         if Cycle.objects.filter(user=user, start_date__lte=date, end_date__gte=date).exists():
             return Response(status=status.HTTP_200_OK) # Date already logged, do nothing.
 
-        # 2. Check for adjacent cycles.
         prev_cycle = Cycle.objects.filter(user=user, end_date=date - timedelta(days=1)).first()
         next_cycle = Cycle.objects.filter(user=user, start_date=date + timedelta(days=1)).first()
 
-        # 3a. Both previous and next cycles exist -> Merge them.
         if prev_cycle and next_cycle:
             prev_cycle.end_date = next_cycle.end_date
             prev_cycle.save()
             next_cycle.delete()
             return Response(status=status.HTTP_200_OK)
         
-        # 3b. Only a previous cycle exists -> Extend it.
         if prev_cycle:
             prev_cycle.end_date = date
             prev_cycle.save()
             return Response(status=status.HTTP_200_OK)
 
-        # 3c. Only a next cycle exists -> Extend it.
         if next_cycle:
             next_cycle.start_date = date
             next_cycle.save()
             return Response(status=status.HTTP_200_OK)
             
-        # 4. No adjacent cycles -> Create a new single-day cycle.
         Cycle.objects.create(user=user, start_date=date, end_date=date)
         return Response(status=status.HTTP_201_CREATED)
 
@@ -228,34 +213,27 @@ class DayLogToggleView(views.APIView):
 
         user = request.user
         
-        # 1. Find the cycle containing the date.
         cycle = Cycle.objects.filter(user=user, start_date__lte=date, end_date__gte=date).first()
 
         if not cycle:
             return Response(status=status.HTTP_204_NO_CONTENT) # No cycle to delete from.
 
-        # 2a. Case: Single-day cycle.
         if cycle.start_date == cycle.end_date:
             cycle.delete()
         
-        # 2b. Case: Date is the start date.
         elif cycle.start_date == date:
             cycle.start_date += timedelta(days=1)
             cycle.save()
 
-        # 2c. Case: Date is the end date.
         elif cycle.end_date == date:
             cycle.end_date -= timedelta(days=1)
             cycle.save()
             
-        # 2d. Case: Date is in the middle -> Split the cycle.
         else:
             original_end_date = cycle.end_date
-            # Update the existing cycle to end before the deleted date.
             cycle.end_date = date - timedelta(days=1)
             cycle.save()
             
-            # Create a new cycle for the part after the deleted date.
             Cycle.objects.create(
                 user=user,
                 start_date=date + timedelta(days=1),
@@ -277,16 +255,12 @@ class InsightsView(views.APIView):
         """
         patterns = []
         
-        # We need at least 3 completed cycles for meaningful patterns
         if cycles.count() < 3:
             return []
 
         num_cycles_to_check = len(cycles)
 
-        # --- PATTERN 1: PRE-MENSTRUAL FATIGUE ---
-        # Checks if user often feels 'Fatigued' in the 3 days before their period.
         fatigue_days_before_period = 3
-        # Pattern is considered significant if it occurs in >50% of cycles
         fatigue_threshold_percentage = 0.5 
         fatigue_incident_count = 0
         
@@ -308,8 +282,6 @@ class InsightsView(views.APIView):
                 'icon': 'moon',
             })
 
-        # --- PATTERN 2: MENSTRUAL PAIN ---
-        # Checks if user reports high pain levels on the first 2 days of their period.
         pain_days_into_period = 2
         pain_threshold_level = 3 # e.g., pain level > 3 out of 5
         pain_threshold_percentage = 0.5
@@ -335,8 +307,6 @@ class InsightsView(views.APIView):
                 'icon': 'fitness',
             })
         
-        # --- PATTERN 3: PRE-MENSTRUAL CRAVINGS ---
-        # Checks if user often logs 'Cravings' in the 5 days before their period.
         try:
             cravings_symptom = Symptom.objects.get(name__iexact='Cravings')
             cravings_days_before_period = 5
@@ -361,7 +331,6 @@ class InsightsView(views.APIView):
                     'icon': 'nutrition',
                 })
         except Symptom.DoesNotExist:
-            # If 'Cravings' symptom doesn't exist, we skip this pattern.
             pass
 
         return patterns
@@ -369,7 +338,6 @@ class InsightsView(views.APIView):
     def get(self, request):
         user = request.user
 
-        # --- 1. Cycle Length ---
         cycles = Cycle.objects.filter(user=user, end_date__isnull=False).order_by('-start_date')[:6]
         
         cycle_length_data = {
@@ -387,7 +355,6 @@ class InsightsView(views.APIView):
                     cycle_length_data['labels'].append(previous_cycle_start.strftime('%b'))
                     cycle_length_data['data'].append(length)
 
-        # --- 2. Symptom Analysis ---
         today = timezone.now().date()
         six_months_ago = today - timedelta(days=180)
         three_months_ago = today - timedelta(days=90)
@@ -429,10 +396,8 @@ class InsightsView(views.APIView):
                     'trend': trend
                 })
 
-        # --- 3. Identified Patterns (Now Dynamic) ---
         identified_patterns = self._identify_user_patterns(user, cycles)
 
-        # --- Final Response ---
         response_data = {
             'cycleLength': cycle_length_data,
             'symptoms': symptom_analysis,
@@ -441,17 +406,15 @@ class InsightsView(views.APIView):
 
         return Response(response_data)
 
-# --- ADDED VIEWS START ---
 class SymptomLogView(views.APIView):
     permission_classes = (IsAuthenticated,)
     def post(self, request, *args, **kwargs):
-        log_date = now().date() # Frontend sends date, but let's assume today
+        log_date = now().date()
         log, _ = DailyLog.objects.get_or_create(user=request.user, date=log_date)
         
         symptom_names = request.data.get('symptoms', [])
         symptoms_qs = Symptom.objects.filter(name__in=symptom_names)
         
-        # Ensure all symptoms exist, create if they don't
         existing_symptom_names = list(symptoms_qs.values_list('name', flat=True))
         new_symptoms_to_create = []
         for name in symptom_names:
@@ -460,13 +423,11 @@ class SymptomLogView(views.APIView):
         
         if new_symptoms_to_create:
             Symptom.objects.bulk_create(new_symptoms_to_create)
-            # Re-query to include newly created ones
             symptoms_qs = Symptom.objects.filter(name__in=symptom_names)
             
         log.symptoms.set(symptoms_qs)
         
         log.symptom_severity = request.data.get('severity')
-        # Only update notes if provided, to avoid overwriting from mood log
         if 'notes' in request.data:
             log.notes = request.data.get('notes')
         log.save()
@@ -479,9 +440,8 @@ class MoodLogView(views.APIView):
         log, _ = DailyLog.objects.get_or_create(user=request.user, date=log_date)
         log.mood = request.data.get('mood', '').upper()
         log.energy_level = request.data.get('energy_level')
-        # Only update notes if provided, to avoid overwriting from symptom log
         if 'notes' in request.data:
             log.notes = request.data.get('notes')
         log.save()
         return Response(status=status.HTTP_200_OK)
-# --- ADDED VIEWS END ---
+    

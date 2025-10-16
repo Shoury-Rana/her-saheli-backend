@@ -26,7 +26,6 @@ class UserRegistrationView(generics.CreateAPIView):
         # Get user profile data
         profile_serializer = UserProfileSerializer(user.profile)
         
-        # Construct response to match login response
         response_data = {
             'access_token': access_token,
             'user': profile_serializer.data
@@ -41,7 +40,6 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
     permission_classes = (IsAuthenticated,)
 
     def get_object(self):
-        # Ensure profile exists for the user
         profile, created = UserProfile.objects.get_or_create(user=self.request.user)
         return profile
 

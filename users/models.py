@@ -64,7 +64,6 @@ class UserProfile(models.Model):
         choices=HealthMode.choices,
         default=HealthMode.MENSTRUAL
     )
-    # This field is derived from selected_mode, but we keep it for frontend compatibility
     menstrual_mode = models.BooleanField(default=True)
     
     def __str__(self):
