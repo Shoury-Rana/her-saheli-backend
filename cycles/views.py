@@ -3,7 +3,7 @@ from django.utils import timezone
 from rest_framework import views, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Count
+from django.db.models import Count, Avg
 from .models import Cycle, DailyLog, Symptom
 from .serializers import CycleSerializer, DailyLogSerializer
 
@@ -269,6 +269,101 @@ class InsightsView(views.APIView):
     """
     permission_classes = (IsAuthenticated,)
 
+    def _identify_user_patterns(self, user, cycles):
+        """
+        Analyzes user logs to find recurring patterns related to their cycle.
+        """
+        patterns = []
+        
+        # We need at least 3 completed cycles for meaningful patterns
+        if cycles.count() < 3:
+            return []
+
+        num_cycles_to_check = len(cycles)
+
+        # --- PATTERN 1: PRE-MENSTRUAL FATIGUE ---
+        # Checks if user often feels 'Fatigued' in the 3 days before their period.
+        fatigue_days_before_period = 3
+        # Pattern is considered significant if it occurs in >50% of cycles
+        fatigue_threshold_percentage = 0.5 
+        fatigue_incident_count = 0
+        
+        for cycle in cycles:
+            period_start = cycle.start_date
+            window_start = period_start - timedelta(days=fatigue_days_before_period)
+            
+            if DailyLog.objects.filter(
+                user=user, 
+                date__range=(window_start, period_start - timedelta(days=1)),
+                mood=DailyLog.Mood.FATIGUED
+            ).exists():
+                fatigue_incident_count += 1
+        
+        if (fatigue_incident_count / num_cycles_to_check) >= fatigue_threshold_percentage:
+            patterns.append({
+                'title': 'Pre-Menstrual Fatigue',
+                'description': f"You often feel fatigued in the {fatigue_days_before_period} days leading up to your period. Consider prioritizing rest during this time.",
+                'icon': 'moon',
+            })
+
+        # --- PATTERN 2: MENSTRUAL PAIN ---
+        # Checks if user reports high pain levels on the first 2 days of their period.
+        pain_days_into_period = 2
+        pain_threshold_level = 3 # e.g., pain level > 3 out of 5
+        pain_threshold_percentage = 0.5
+        pain_incident_count = 0
+
+        for cycle in cycles:
+            period_start = cycle.start_date
+            window_end = period_start + timedelta(days=pain_days_into_period - 1)
+            
+            avg_pain_result = DailyLog.objects.filter(
+                user=user,
+                date__range=(period_start, window_end),
+                pain_level__isnull=False
+            ).aggregate(avg_pain=Avg('pain_level'))
+
+            if avg_pain_result['avg_pain'] and avg_pain_result['avg_pain'] > pain_threshold_level:
+                pain_incident_count += 1
+
+        if (pain_incident_count / num_cycles_to_check) >= pain_threshold_percentage:
+             patterns.append({
+                'title': 'Menstrual Pain',
+                'description': f"You tend to experience higher pain levels during the first {pain_days_into_period} days of your period. Gentle exercise or a heat pack may help.",
+                'icon': 'fitness',
+            })
+        
+        # --- PATTERN 3: PRE-MENSTRUAL CRAVINGS ---
+        # Checks if user often logs 'Cravings' in the 5 days before their period.
+        try:
+            cravings_symptom = Symptom.objects.get(name__iexact='Cravings')
+            cravings_days_before_period = 5
+            cravings_threshold_percentage = 0.5
+            cravings_incident_count = 0
+
+            for cycle in cycles:
+                period_start = cycle.start_date
+                window_start = period_start - timedelta(days=cravings_days_before_period)
+
+                if DailyLog.objects.filter(
+                    user=user,
+                    date__range=(window_start, period_start - timedelta(days=1)),
+                    symptoms=cravings_symptom
+                ).exists():
+                    cravings_incident_count += 1
+            
+            if (cravings_incident_count / num_cycles_to_check) >= cravings_threshold_percentage:
+                patterns.append({
+                    'title': 'Dietary Pattern',
+                    'description': f"Increased cravings seem to be common for you in the {cravings_days_before_period} days before your period starts.",
+                    'icon': 'nutrition',
+                })
+        except Symptom.DoesNotExist:
+            # If 'Cravings' symptom doesn't exist, we skip this pattern.
+            pass
+
+        return patterns
+
     def get(self, request):
         user = request.user
 
@@ -286,8 +381,8 @@ class InsightsView(views.APIView):
                 previous_cycle_start = cycles[i].start_date
                 length = (current_cycle_start - previous_cycle_start).days
                 
-                if 15 < length < 45: # Basic validation for cycle length
-                    cycle_length_data['labels'].append(current_cycle_start.strftime('%b'))
+                if 15 < length < 45: # Basic validation
+                    cycle_length_data['labels'].append(previous_cycle_start.strftime('%b'))
                     cycle_length_data['data'].append(length)
 
         # --- 2. Symptom Analysis ---
@@ -304,7 +399,8 @@ class InsightsView(views.APIView):
 
             for symptom in logged_symptoms:
                 total_count = logs_last_six_months.filter(symptoms=symptom).count()
-                frequency = f"{int((total_count / total_logs_count) * 100)}%"
+                frequency_percent = (total_count / total_logs_count) * 100 if total_logs_count > 0 else 0
+                frequency = f"{int(frequency_percent)}%"
 
                 count_first_half = logs_last_six_months.filter(
                     symptoms=symptom, 
@@ -331,24 +427,8 @@ class InsightsView(views.APIView):
                     'trend': trend
                 })
 
-        # --- 3. Identified Patterns (Static) ---
-        identified_patterns = [
-            {
-                'title': 'Sleep Quality',
-                'description': 'Your sleep quality tends to decrease 2-3 days before your period',
-                'icon': 'moon',
-            },
-            {
-                'title': 'Exercise Impact',
-                'description': 'Light exercise during your period helps reduce cramp intensity',
-                'icon': 'fitness',
-            },
-            {
-                'title': 'Dietary Pattern',
-                'description': 'Increased cravings noticed 4-5 days before period starts',
-                'icon': 'nutrition',
-            },
-        ]
+        # --- 3. Identified Patterns (Now Dynamic) ---
+        identified_patterns = self._identify_user_patterns(user, cycles)
 
         # --- Final Response ---
         response_data = {
