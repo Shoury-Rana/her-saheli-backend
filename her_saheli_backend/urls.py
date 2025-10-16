@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 from users.views import UserProfileView # Import the view directly
+from cycles.views import SymptomLogView, MoodLogView # <-- ADD THIS IMPORT
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -16,6 +17,11 @@ urlpatterns = [
     path('api/postpartum/', include('postpartum.urls')),
     path('api/content/', include('content.urls')),
     path('api/chatbot/', include('chatbot.urls')),
+    
+    # --- ADDED URLS FOR LOGGING START ---
+    path('api/symptoms/', SymptomLogView.as_view(), name='log-symptoms'),
+    path('api/mood/', MoodLogView.as_view(), name='log-mood'),
+    # --- ADDED URLS FOR LOGGING END ---
     
     # API Documentation URLs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

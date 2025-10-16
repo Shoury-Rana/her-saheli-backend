@@ -32,6 +32,11 @@ class DailyLog(models.Model):
     mood = models.CharField(max_length=20, choices=Mood.choices, null=True, blank=True)
     pain_level = models.PositiveSmallIntegerField(null=True, blank=True) # e.g., 0-5
     symptoms = models.ManyToManyField(Symptom, blank=True)
+    
+    symptom_severity = models.PositiveSmallIntegerField(null=True, blank=True) # For severity from symptoms screen
+    energy_level = models.PositiveSmallIntegerField(null=True, blank=True)     # For energy from mood screen
+    notes = models.TextField(blank=True, null=True)                             # For notes from both screens
+
 
     class Meta:
         ordering = ['-date']

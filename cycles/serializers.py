@@ -16,4 +16,6 @@ class DailyLogSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = DailyLog
-        fields = ('date', 'mood', 'pain_level', 'symptoms')
+        # --- UPDATED FIELDS START ---
+        fields = ('date', 'mood', 'pain_level', 'symptoms', 'symptom_severity', 'energy_level', 'notes')
+        # --- UPDATED FIELDS END ---

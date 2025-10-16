@@ -6,6 +6,8 @@ from rest_framework.permissions import IsAuthenticated
 from django.db.models import Count, Avg
 from .models import Cycle, DailyLog, Symptom
 from .serializers import CycleSerializer, DailyLogSerializer
+from django.utils.timezone import now # Ensure this import is present
+
 
 class CycleLogView(views.APIView):
     """
@@ -438,3 +440,48 @@ class InsightsView(views.APIView):
         }
 
         return Response(response_data)
+
+# --- ADDED VIEWS START ---
+class SymptomLogView(views.APIView):
+    permission_classes = (IsAuthenticated,)
+    def post(self, request, *args, **kwargs):
+        log_date = now().date() # Frontend sends date, but let's assume today
+        log, _ = DailyLog.objects.get_or_create(user=request.user, date=log_date)
+        
+        symptom_names = request.data.get('symptoms', [])
+        symptoms_qs = Symptom.objects.filter(name__in=symptom_names)
+        
+        # Ensure all symptoms exist, create if they don't
+        existing_symptom_names = list(symptoms_qs.values_list('name', flat=True))
+        new_symptoms_to_create = []
+        for name in symptom_names:
+            if name not in existing_symptom_names:
+                new_symptoms_to_create.append(Symptom(name=name))
+        
+        if new_symptoms_to_create:
+            Symptom.objects.bulk_create(new_symptoms_to_create)
+            # Re-query to include newly created ones
+            symptoms_qs = Symptom.objects.filter(name__in=symptom_names)
+            
+        log.symptoms.set(symptoms_qs)
+        
+        log.symptom_severity = request.data.get('severity')
+        # Only update notes if provided, to avoid overwriting from mood log
+        if 'notes' in request.data:
+            log.notes = request.data.get('notes')
+        log.save()
+        return Response(status=status.HTTP_200_OK)
+
+class MoodLogView(views.APIView):
+    permission_classes = (IsAuthenticated,)
+    def post(self, request, *args, **kwargs):
+        log_date = now().date()
+        log, _ = DailyLog.objects.get_or_create(user=request.user, date=log_date)
+        log.mood = request.data.get('mood', '').upper()
+        log.energy_level = request.data.get('energy_level')
+        # Only update notes if provided, to avoid overwriting from symptom log
+        if 'notes' in request.data:
+            log.notes = request.data.get('notes')
+        log.save()
+        return Response(status=status.HTTP_200_OK)
+# --- ADDED VIEWS END ---
